@@ -48,13 +48,13 @@
 }
 
 + (NSString*) encodeURI:(NSString*)value {
-	NSString* result = (NSString *)CFBridgingRelease(CFURLCreateStringByAddingPercentEscapes(
+    NSString* result = (NSString *)CFBridgingRelease(CFURLCreateStringByAddingPercentEscapes(
                                                                                              NULL,
                                                                                              (CFStringRef)value,
                                                                                              NULL,
                                                                                              (CFStringRef)@"!*'();:@&=+$,/?%#[]",
                                                                                              kCFStringEncodingUTF8));
-	return result;
+    return result;
 }
 
 + (NSString*) dictionaryToQuerystring:(NSDictionary*) parameters {
@@ -63,8 +63,21 @@
     BOOL firstParameter = YES;
     for(id key in parameters) {
         id value = [parameters objectForKey:key];
-        if (!([value isKindOfClass:[NSURL class]] || value == nil)) { // Don't encode files and null values
-            NSString* parameter = [NSString stringWithFormat:@"%@%@%@", [UNIHTTPClientHelper encodeURI:key], @"=", [UNIHTTPClientHelper encodeURI:value]];
+        if ([value isKindOfClass:[NSArray class]])
+        {
+            //Support for NSArray parameters
+            for (id paramValue in value) {
+                NSString* parameter = [NSString stringWithFormat:@"%@%@%@", [UNIHTTPClientHelper encodeURI:key], @"=", paramValue];
+                if (firstParameter) {
+                    result = [NSString stringWithFormat:@"%@%@", result, parameter];
+                } else {
+                    result = [NSString stringWithFormat:@"%@&%@", result, parameter];
+                }
+                firstParameter = NO;
+            }
+        }
+        else if (!([value isKindOfClass:[NSURL class]] || value == nil)) { // Don't encode files and null values
+            NSString* parameter = [NSString stringWithFormat:@"%@%@%@", [UNIHTTPClientHelper encodeURI:key], @"=", value];
             if (firstParameter) {
                 result = [NSString stringWithFormat:@"%@%@", result, parameter];
             } else {
@@ -99,8 +112,8 @@
             url = [NSString stringWithString:finalUrl];
         }
     }
-
-    NSMutableURLRequest *requestObj = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url] cachePolicy:[UNIRest cachePolicy] timeoutInterval:[UNIRest timeout]];
+    
+    NSMutableURLRequest *requestObj = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url] cachePolicy:NSURLRequestUseProtocolCachePolicy timeoutInterval:[UNIRest timeout]];
     NSMutableData* body = [[NSMutableData alloc] init];
     
     if (httpMethod != GET) {
@@ -117,14 +130,22 @@
                 
                 for(id key in parameters) {
                     id value = [parameters objectForKey:key];
-                    if ([value isKindOfClass:[NSURL class]] && value != nil) { // Don't encode files and null values
+                    /* Handling Multi Key With Same Name */
+                    if ([value isKindOfClass:[NSArray class]]) {
+                        for (id aValue in value) {
+                            [body appendData:[[NSString stringWithFormat:@"\r\n--%@\r\n", BOUNDARY] dataUsingEncoding:NSUTF8StringEncoding]];
+                            [body appendData:[[NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"\r\n\r\n", key] dataUsingEncoding:NSUTF8StringEncoding]];
+                            [body appendData:[[NSString stringWithFormat:@"%@", aValue] dataUsingEncoding:NSUTF8StringEncoding]];
+                        }
+                    }
+                    else if ([value isKindOfClass:[NSURL class]] && value != nil) { // Don't encode files and null values
                         [body appendData:[[NSString stringWithFormat:@"\r\n--%@\r\n", BOUNDARY] dataUsingEncoding:NSUTF8StringEncoding]];
                         NSString* filename = [[value absoluteString] lastPathComponent];
                         
                         NSData* data = [NSData dataWithContentsOfURL:value];
                         
                         [body appendData:[[NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"; filename=\"%@\"\r\n", key, filename] dataUsingEncoding:NSUTF8StringEncoding]];
-                        [body appendData:[[NSString stringWithFormat:@"Content-Length: %lu\r\n\r\n", (unsigned long)data.length] dataUsingEncoding:NSUTF8StringEncoding]];
+                        [body appendData:[[NSString stringWithFormat:@"Content-Length: %d\r\n\r\n", data.length] dataUsingEncoding:NSUTF8StringEncoding]];
                         [body appendData:data];
                     } else {
                         [body appendData:[[NSString stringWithFormat:@"\r\n--%@\r\n", BOUNDARY] dataUsingEncoding:NSUTF8StringEncoding]];
@@ -169,6 +190,7 @@
     }
     
     // Add headers
+    [headers setValue:@"unirest-objc/1.1" forKey:@"user-agent"];
     [headers setValue:@"gzip" forKey:@"accept-encoding"];
     
     // Add cookies to the headers
@@ -179,17 +201,13 @@
         NSString* user = ([request username] == nil) ? @"" : [request username];
         NSString* pass = ([request password] == nil) ? @"" : [request password];
         NSString *credentials = [NSString stringWithFormat: @"%@:%@", user, pass];
-
+        
         NSString* header = [NSString stringWithFormat:@"Basic %@", [Base64 base64String:credentials]];
         [headers setValue:header forKey:@"authorization"];
     }
     
     // Default headers
     NSMutableDictionary* defaultHeaders = [UNIRest defaultHeaders];
-    if ([defaultHeaders valueForKey:@"user-agent"] == nil || [[defaultHeaders valueForKey:@"user-agent"] isEqualToString:@""]) {
-        [headers setValue:@"unirest-objc/1.1" forKey:@"user-agent"];
-    }
-    
     for(NSString* key in defaultHeaders) {
         NSString *value = [defaultHeaders objectForKey:key];
         [requestObj addValue:value forHTTPHeaderField:key];
@@ -218,7 +236,7 @@
         
         UNIHTTPResponse* res = [self getResponse:response data:data];
         handler(res, connectionError);
- 
+        
     }];
     
     return connection;
